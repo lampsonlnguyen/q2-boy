@@ -132,7 +132,7 @@ static char active_rom[PATH_CAP];
 static char roms[ROM_LIMIT][256];
 static int rom_count;
 static uint32_t cart[CART_WIDTH * CART_HEIGHT], canvas[WIDTH * HEIGHT], color[65536];
-static bool smoke, have_frame, use_dynarec;
+static bool smoke, have_frame;
 static volatile sig_atomic_t launch_stage;
 static uint64_t speed_start;
 static unsigned speed_frames, video_frames;
@@ -190,8 +190,7 @@ static void locate_app(const char *argv0) {
     else strcpy(app_dir, ".");
 }
 static int clamp(int x, int low, int high) { return x < low ? low : x > high ? high : x; }
-/* 2x has headroom with the original path. At higher targets pace video by
- * elapsed time, leaving extra GBA frames to advance without a panel update. */
+/* Skip video presentation during fast-forward without skipping emulation. */
 static bool paced_video(void) { return screen == GAME && fast && (fast_rate >= 3 || core == &nes); }
 static void schedule_video(uint64_t now) {
     allow_video = screen == GAME && (!paced_video() || !next_video || now >= next_video);
@@ -1415,10 +1414,7 @@ static void log_launch(void) {
         FILE *stream = freopen(log, "a", stderr);
         if (stream) setvbuf(stream, NULL, _IOLBF, 0);
     }
-    if (file_path(flag, sizeof flag, data_dir, "/enable-dynarec.txt")) {
-        FILE *f = fopen(flag, "r");
-        if (f) { use_dynarec = fgetc(f) == '1'; fclose(f); }
-    }
+
     struct sigaction action = {.sa_handler = write_fatal};
     sigemptyset(&action.sa_mask);
     sigaction(SIGILL, &action, NULL);
@@ -1435,8 +1431,7 @@ static void log_launch(void) {
     }
 }
 int main(int argc, char **argv) {
-    smoke = argc >= 4 && (!strcmp(argv[1], "--smoke") || !strcmp(argv[1], "--smoke-dynarec"));
-    use_dynarec = smoke && !strcmp(argv[1], "--smoke-dynarec");
+    smoke = argc >= 4 && !strcmp(argv[1], "--smoke");
     if (smoke) data_dir = argv[3];
     if (!prepare_dirs()) return 1;
     if (!smoke) {

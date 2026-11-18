@@ -1,0 +1,19 @@
+name: NES source checks
+on:
+  push:
+  pull_request:
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y clang libasound2-dev
+      - run: git clone --depth 1 https://github.com/libretro/libretro-common.git deps/libretro-common
+      - run: clang -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Werror=implicit-function-declaration -fsyntax-only -Ideps/libretro-common/include src/main.c src/platform.c
+      - run: sh -n tools/build-q2.sh src/build.sh
+      - run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          Path('/tmp/mapper5.nes').write_bytes(b'NES\x1a' + bytes([0x20,0x20,0x50,0x08]) + bytes(8))
+          PY
+          python3 tools/check-rom.py /tmp/mapper5.nes
