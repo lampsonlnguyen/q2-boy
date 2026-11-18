@@ -1,0 +1,5 @@
+dist/
+deps/
+*.o
+*.so
+*.zip

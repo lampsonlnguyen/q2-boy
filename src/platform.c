@@ -17,7 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define INPUT_SOCKET "/tmp/q2-boy.input.sock"
+#define INPUT_SOCKET "/tmp/q2-nes.input.sock"
 static int fb = -1, keys = -1, sock = -1, back, stride, original_y;
 static struct fb_var_screeninfo video;
 static size_t map_size;
