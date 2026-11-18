@@ -2,6 +2,8 @@
 set -eu
 : "${SYSROOT:?Set SYSROOT to a Q2 NaN2008 MIPS sysroot}"
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+test -f "$SYSROOT/lib/libc.so.6" || { echo "Missing Q2 libc in SYSROOT" >&2; exit 1; }
+test -f "$SYSROOT/lib/libasound.so.2" || { echo "Missing Q2 ALSA in SYSROOT" >&2; exit 1; }
 CORE_SRC=${CORE_SRC:-"$ROOT/deps/libretro-fceumm"}
 if [ ! -f "$CORE_SRC/Makefile.libretro" ]; then
   mkdir -p "$ROOT/deps"
@@ -17,6 +19,7 @@ make -C "$CORE_SRC" -f Makefile.libretro -j"${JOBS:-2}" \
   CC="$Q2_CC" PLATFORM_DEFINES="-O2 -fPIC -D_GNU_SOURCE" \
   LDFLAGS="--sysroot=$SYSROOT -fuse-ld=lld -Wl,--hash-style=sysv"
 STAGE="$ROOT/dist/card"
+rm -rf "$STAGE"
 mkdir -p "$STAGE/.nes"
 cp "$ROOT/package/.nes/q2app" "$STAGE/.nes/q2app"
 cp "$CORE_SRC/fceumm_libretro.so" "$STAGE/.nes/fceumm_libretro.so"

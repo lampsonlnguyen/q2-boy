@@ -8,7 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y clang libasound2-dev
-      - run: mkdir -p deps && git clone --depth 1 https://github.com/libretro/libretro-common.git deps/libretro-common
+      - run: git clone --depth 1 https://github.com/libretro/libretro-common.git deps/libretro-common
       - run: clang -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -Werror=implicit-function-declaration -fsyntax-only -Ideps/libretro-common/include src/main.c src/platform.c
       - run: sh -n tools/build-q2.sh src/build.sh
       - run: |

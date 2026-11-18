@@ -1405,7 +1405,7 @@ static void write_fatal(int sig) {
     _exit(128 + sig);
 }
 static void log_launch(void) {
-    char log[PATH_CAP], previous[PATH_CAP], flag[PATH_CAP];
+    char log[PATH_CAP], previous[PATH_CAP];
     if (file_path(log, sizeof log, data_dir, "/q2-nes.log")) {
         struct stat st;
         if (!stat(log, &st) && st.st_size > 128 * 1024 &&
