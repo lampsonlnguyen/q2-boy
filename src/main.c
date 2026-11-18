@@ -166,10 +166,10 @@ static bool enable_nes(void) {
     char path[PATH_CAP];
     if (snprintf(path, sizeof path, "%s/fceumm_libretro.so", app_dir) >= (int)sizeof path) return false;
     void *handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-    if (!handle) { fprintf(stderr, "NES core unavailable: %s\\n", dlerror()); return false; }
+    if (!handle) { fprintf(stderr, "NES core unavailable: %s\n", dlerror()); return false; }
 #define API_LOAD(name) do { \
     nes.name = (__typeof__(nes.name))dlsym(handle, "retro_" #name); \
-    if (!nes.name) { fprintf(stderr, "NES core missing retro_%s\\n", #name); dlclose(handle); return false; } \
+    if (!nes.name) { fprintf(stderr, "NES core missing retro_%s\n", #name); dlclose(handle); return false; } \
 } while (0);
     CORE_API(API_LOAD)
 #undef API_LOAD
@@ -605,7 +605,7 @@ static bool load_rom(const char *path) {
     struct retro_game_info info = {.path = path, .data = rom_data, .size = (size_t)file.st_size};
     if (running) close_rom();
     initialize_core(&nes);
-    fprintf(stderr, "Opening NES ROM %s (%ld bytes) with FCEUmm\\n", name, (long)file.st_size);
+    fprintf(stderr, "Opening NES ROM %s (%ld bytes) with FCEUmm\n", name, (long)file.st_size);
     launch_stage = 1;
     bool loaded = core->load_game(&info);
     free(rom_data); /* FCEUmm reads the cartridge during retro_load_game. */
