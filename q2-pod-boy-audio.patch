@@ -1,0 +1,336 @@
+diff --git a/patch/addon.c b/patch/addon.c
+index bc4b1f6..d057da8 100644
+--- a/patch/addon.c
++++ b/patch/addon.c
+@@ -829,12 +829,19 @@ static struct {
+     unsigned seen;       /* time_now_ms of the last input */
+     unsigned held, term; /* when Return went down, when TERM went (0: neither) */
+     char path[48];       /* the game's socket */
++    int boy_bridge, resume_owner, resume_status;
++    unsigned audio_poll, audio_seq, audio_last[9], native_at;
++    int native_ui;
++    void *native_origin;
+ } gm __attribute__((section(".scratch")));
+ 
++#include "boy_audio.h"
++
+ int addon_games(void) { return addon_scan(), ap.games; }
+ int addon_games_last(void) { return ap.games; }
+ const char *addon_game_name(int k) { return k >= 0 && k < ap.games ? ap.a[ap.game[k]].name : 0; }
+ int addon_game_on(void) { return gm.pid; }
++int addon_game_front(void) { return gm.pid && !gm.native_ui; }
+ int addon_game_audio(void) { return gm.pid && gm.audio; }
+ 
+ static void game_kill(const char *how) {
+@@ -866,13 +873,28 @@ static int game_start(app_t *a) {
+     char vol[5], pop[POPUP_ENV];
+     const char *dev = 0;
+     popup_env(pop, sizeof pop); /* the theme's pop-up, for its own menus */
+-    if (a->audio) { /* the sound is its: hciplayer off the PCM, the jack readied, as video_play */
+-        headset_manual();
+-        spot_yield();
+-        radio_stop();
+-        player_stop();
++    gm.boy_bridge = a->audio && !strcmp(a->id, "boy");
++    gm.resume_owner = gm.resume_status = 0;
++    gm.audio_seq = gm.audio_poll = 0;
++    gm.native_ui = 0;
++    gm.native_origin = (void *)0;
++    memset(gm.audio_last, 0, sizeof gm.audio_last);
++    int audio = a->audio;
++    if (gm.boy_bridge) {
++        unlink(BOY_AUDIO_REQUEST);
++        unlink(BOY_AUDIO_REPLY);
++        audio = !boy_prefers_music();
++        if (audio) boy_take_audio();
++    }
++    if (audio) {
++        if (!gm.boy_bridge) {
++            headset_manual();
++            spot_yield();
++            radio_stop();
++            player_stop();
++        }
+         dev = output_device(vol);
+-        if (!dev) dac_take();
++        if (!gm.boy_bridge && !dev) dac_take();
+     }
+     int pid = fork();
+     if (!pid) {
+@@ -882,15 +904,19 @@ static int game_start(app_t *a) {
+          * thread holds libc's environment lock (stock's toolsSetTimeZone) hangs the child here;
+          * Return's hold ends it */
+         setenv("Q2_POPUP", pop, 1);
+-        if (a->audio) /* q2video's arguments: the device, then a soft output's volume */
++        if (gm.boy_bridge) setenv("Q2_BOY_AUDIO_BRIDGE", "2", 1);
++        if (audio) /* q2video's arguments: the device, then a soft output's volume */
+             execl(a->bin, a->bin, dev ? dev : "plughw:0,0", dev ? vol : (char *)0, (char *)0);
+         else
+             execl(a->bin, a->bin, (char *)0);
+         child_exit(127);
+     }
+-    if (pid < 0) return toast("It couldn't start"), 0;
++    if (pid < 0) {
++        if (gm.boy_bridge && audio) boy_restore_music();
++        return toast("It couldn't start"), 0;
++    }
+     gm.pid = pid;
+-    gm.audio = a->audio;
++    gm.audio = audio;
+     gm.sock = socket(1, 1, 0); /* AF_UNIX, SOCK_DGRAM (MIPS numbering) */
+     gm.seen = time_now_ms();
+     gm.held = gm.term = gm.eat = 0;
+@@ -914,15 +940,26 @@ int addon_game_open(const char *id) {
+ /* ringnav_input, every event: 1 when it is the game's (sent as its datagram) or the release of the
+  * Return held to end it; 0 for stock's, a music key among them */
+ int addon_game_input(void *e) {
+-    if (!e) return gm.pid != 0;
++    if (!e) return addon_game_front();
+     unsigned type = (unsigned)I(e, EVENT_TYPE), key = (unsigned)I(e, EVENT_KEY);
+     int keyish = type == EVT_KEY_DOWN || type == EVT_KEY_UP || type == EVT_KEY_LONG;
+     if (keyish && key == KEY_RETURN && gm.eat) /* the held Return's repeats and release */
+         return gm.eat = type != EVT_KEY_UP, 1;
+     if (!gm.pid) return 0;
+-    if (!gm.audio && keyish && (key == KEY_PLAY || key == KEY_BACK_BTN || key == KEY_FWD_BTN))
++    if (gm.native_ui) {
++        if (keyish && key == KEY_RETURN) {
++            void *top = window_manager_get_top_window(window_manager());
++            if (top && !tk_strcmp(widget_get_prop_str(top, "name", ""), "playing_page")) {
++                if (type == EVT_KEY_UP) boy_close_now_playing(1);
++                return 1;
++            }
++        }
++        return 0;
++    }
++    if (!gm.audio && !gm.boy_bridge && keyish &&
++        (key == KEY_PLAY || key == KEY_BACK_BTN || key == KEY_FWD_BTN))
+         return 0;
+-    if (keyish && key == KEY_RETURN)
++    if (keyish && key == KEY_RETURN && !gm.boy_bridge)
+         gm.held = type == EVT_KEY_UP ? 0
+                   : type == EVT_KEY_DOWN && !gm.held
+                       ? (unsigned)time_now_ms() | 1 /* not a repeat's */
+@@ -955,17 +992,25 @@ static void game_poll(void) {
+          * (ringnav_start_player) but its pause stuck on nothing, so Play would do nothing */
+         if (gm.audio && mclGetPlayStatus() == 3) player_stop();
+         gm.pid = gm.audio = 0;
++        if (gm.boy_bridge) {
++            gm.native_ui = 0;
++            boy_restore_music();
++            unlink(BOY_AUDIO_REQUEST);
++            unlink(BOY_AUDIO_REPLY);
++            gm.boy_bridge = 0;
++        }
+         wheel_raw = 0;
+         widget_invalidate_force(window_manager(), 0);
+         if (status == 127 << 8) toast("It couldn't start"); /* the child's execl failed */
+         return;
+     }
+     unsigned now = (unsigned)time_now_ms();
++    boy_audio_poll(now);
+     /* signed: a stamp can be just after now (| 1 rounds up, game_end reads the clock again) */
+     if (gm.held && (int)(now - gm.held) >= GAME_HOLD_MS) gm.held = 0, gm.eat = 1, game_end();
+     if (gm.term && (int)(now - gm.term) >= GAME_KILL_MS) gm.term = now | 1, game_kill("-9 ");
+     int travel = __sync_lock_test_and_set(&wheel_travel, 0);
+-    if (travel) {
++    if (travel && !gm.native_ui) {
+         char m[16];
+         tk_snprintf(m, sizeof m, "w %d", travel);
+         dgram_send(&gm.sock, gm.path, m, strlen(m));
+@@ -976,7 +1021,7 @@ static void game_poll(void) {
+         if (I(g_dacoff_time, 0) > 0) I(g_dacoff_time, 0) = 0;
+         return;
+     }
+-    if (time_now_ms() - gm.seen < GAME_IDLE_MS) return;
++    if (gm.boy_bridge || time_now_ms() - gm.seen < GAME_IDLE_MS) return;
+     if (!ringnav_smart_awake()) game_end();
+     gm.seen = time_now_ms(); /* Smart Awake: asked again GAME_IDLE_MS on */
+ }
+diff --git a/patch/boy_audio.h b/patch/boy_audio.h
+new file mode 100644
+index 0000000..503ec88
+--- /dev/null
++++ b/patch/boy_audio.h
+@@ -0,0 +1,143 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* Narrow audio bridge for the q2-boy card game. Included by addon.c after game state. */
++#define BOY_AUDIO_REQUEST "/tmp/q2-boy.audio.req"
++#define BOY_AUDIO_REPLY "/tmp/q2-boy.audio.reply"
++#define BOY_AUDIO_MODE "/mnt/mmc/q2-boy/audio-source.cfg"
++#define BOY_AUDIO_MAGIC 0x51474131u
++
++enum { GBA_GAME = 1, GBA_MUSIC, GBA_VOLUME, GBA_PREVIOUS, GBA_PLAY, GBA_NEXT, GBA_NOW_PLAYING };
++struct boy_command {
++    unsigned magic, seq;
++    int action, value;
++};
++struct boy_reply {
++    unsigned magic, seq;
++    int music, volume, limit, route, gain, playing, native_ui;
++};
++
++static int boy_prefers_music(void) {
++    char mode[24];
++    if (!state_read(BOY_AUDIO_MODE, mode, sizeof mode)) return 0;
++    const unsigned char *p = (const unsigned char *)mode + 1; /* state_read adds a newline */
++    if (p[0] == 0xef && p[1] == 0xbb && p[2] == 0xbf) p += 3;
++    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
++    return !strncmp((const char *)p, "music", 5);
++}
++
++/* 0 wired DAC, 1 Bluetooth, 2 soft USB, 3 hardware-volume USB. */
++static int boy_route(char vol[5]) {
++    const char *dev = output_device(vol);
++    if (!dev) return 0;
++    if (!strcmp(dev, "plug:bluealsa")) return 1;
++    return vol[0] == 'h' ? 3 : 2;
++}
++
++static void boy_take_audio(void) {
++    gm.resume_owner = media_owner();
++    gm.resume_status = gm.resume_owner == 1 ? mclGetPlayStatus() : (media_playing() ? 2 : 0);
++    headset_manual();
++    spot_yield();
++    radio_stop();
++    if (gm.resume_status == 2 || gm.resume_status == 3)
++        player_save_stop();
++    else
++        player_stop();
++    char vol[5];
++    if (boy_route(vol) == 0) dac_take();
++}
++
++static void boy_restore_music(void) {
++    int owner = gm.resume_owner, status = gm.resume_status;
++    gm.resume_owner = gm.resume_status = 0;
++    if (status != 2 && status != 3) return;
++    if (owner == 2 && status == 2)
++        spot_set_playing(1);
++    else if (owner == 1 && !check_forbid_play_no_headset(0))
++        player_save_start(status == 3);
++}
++
++static void boy_close_now_playing(int pop_page) {
++    if (!gm.native_ui) return;
++    gm.native_ui = 0;
++    gm.native_origin = (void *)0;
++    gm.held = 0;
++    if (pop_page) navigator_back();
++    __sync_lock_test_and_set(&wheel_travel, 0);
++    wheel_raw = 1;
++}
++static void boy_open_now_playing(unsigned now) {
++    if (gm.native_ui) return;
++    if (gm.audio) {
++        gm.audio = 0;
++        boy_restore_music();
++    }
++    void *wm = window_manager();
++    gm.native_origin = window_manager_get_top_window(wm);
++    gm.native_at = now;
++    gm.native_ui = 1;
++    gm.held = 0;
++    wheel_raw = 0;
++    __sync_lock_test_and_set(&wheel_travel, 0);
++    static const int context[4] = { 0, 0, 0xff, 2 };
++    navigator_switch_to_with_context("playing_page", context, 0);
++    widget_invalidate_force(wm, 0);
++}
++static void boy_native_poll(unsigned now) {
++    if (!gm.native_ui || now - gm.native_at < 500) return;
++    void *wm = window_manager();
++    /* The normal touch Back also works. The origin pointer is only compared. */
++    if (!window_manager_is_animating(wm) && window_manager_get_top_window(wm) == gm.native_origin)
++        boy_close_now_playing(0);
++}
++
++static void boy_audio_poll(unsigned now) {
++    if (!gm.boy_bridge || (gm.audio_poll && now - gm.audio_poll < 80)) return;
++    gm.audio_poll = now;
++    boy_native_poll(now);
++    struct boy_command cmd;
++    if (BLOB_IO(BOY_AUDIO_REQUEST, cmd, 0) && cmd.magic == BOY_AUDIO_MAGIC && cmd.seq &&
++        cmd.seq != gm.audio_seq) {
++        gm.audio_seq = cmd.seq;
++        if (cmd.action == GBA_GAME && !gm.audio) {
++            boy_take_audio();
++            gm.audio = 1;
++        } else if (cmd.action == GBA_MUSIC && gm.audio) {
++            gm.audio = 0;
++            boy_restore_music();
++        } else if (cmd.action == GBA_NOW_PLAYING) {
++            boy_open_now_playing(now);
++        } else if (cmd.action == GBA_VOLUME) {
++            int delta = cmd.value;
++            if (delta > 10) delta = 10;
++            if (delta < -10) delta = -10;
++            int level = g_volume + delta;
++            if (level < 0) level = 0;
++            if (level > g_maxvolume) level = g_maxvolume;
++            if (level > 100) level = 100;
++            if (level != g_volume) {
++                g_volume = (unsigned char)level;
++                device_set_volume(level, 1);
++                write_int_config(level, "PLAYSET", "VOLUME");
++            }
++        } else if (!gm.audio) {
++            if (cmd.action == GBA_PREVIOUS) media_key(KEY_BACK_BTN);
++            if (cmd.action == GBA_PLAY) media_key(KEY_PLAY);
++            if (cmd.action == GBA_NEXT) media_key(KEY_FWD_BTN);
++        }
++    }
++    char vol[5];
++    int route = boy_route(vol);
++    struct boy_reply reply = { BOY_AUDIO_MAGIC,
++                               gm.audio_seq,
++                               !gm.audio,
++                               g_volume,
++                               g_maxvolume,
++                               route,
++                               route == 1   ? headset_gain()
++                               : route == 2 ? g_volume
++                                            : 100,
++                               media_playing(),
++                               gm.native_ui };
++    if (memcmp(&reply, gm.audio_last, sizeof reply) && BLOB_IO(BOY_AUDIO_REPLY, reply, 1))
++        memcpy(gm.audio_last, &reply, sizeof reply);
++}
+diff --git a/patch/navigation.c b/patch/navigation.c
+index 02cc381..db9b924 100644
+--- a/patch/navigation.c
++++ b/patch/navigation.c
+@@ -8876,7 +8876,8 @@ int ringnav_input(void *wm, void *e) {
+  * first lit pass repaints the whole screen (ringnav_sleep; docs/internals.md Battery). */
+ int ringnav_wm_paint(void *wm) {
+     if (wm && !g_backlight_status && !window_manager_is_animating(wm)) return 0; /* RET_OK */
+-    int away = video_on() || addon_game_on();
++    int away =
++        video_on() || addon_game_front(); /* native Now Playing can paint over a suspended q2-boy */
+     void *vt = wm && !away ? P(wm, 0x94) : (void *)0;
+     int (*paint)(void *) = vt ? (int (*)(void *))P(vt, 0xc) : (int (*)(void *))0;
+     return paint ? paint(wm) : away ? 0 : 0x10; /* RET_BAD_PARAMS, as stock */
+diff --git a/patch/peq.h b/patch/peq.h
+index 6b2c068..897cfbd 100644
+--- a/patch/peq.h
++++ b/patch/peq.h
+@@ -497,7 +497,7 @@ void addon_forget(const char *dir), addon_quit(const char *dir);
+ /* addon.c's card games (q2app game=1, or any app whose row=games), Games' rows after its own: how
+  * many (a scan), one's name, its press (a game's start over the screen, another app's page: 1 when
+  * it runs or opened), whether a game runs, and ringnav_input's events for it */
+-int addon_games(void), addon_game_start(int k), addon_game_on(void);
++int addon_games(void), addon_game_start(int k), addon_game_on(void), addon_game_front(void);
+ int addon_game_audio(
+     void); /* a card game with audio=1 runs: the sound and the media keys are its */
+ int addon_game_open(const char *id); /* Home's Shortcut: the card game with this id, -1 none */
+diff --git a/tools/build.py b/tools/build.py
+index 9aef87a..ca74a60 100644
+--- a/tools/build.py
++++ b/tools/build.py
+@@ -1573,6 +1573,7 @@ FUNCTIONS = {
+  'mclGetCueFlag': ('int', 'void'),  # the playing record has a CUE start or end
+  'mclGetPlayStatus': ('int', 'void'),  # 1 stopped, 2 playing, 3 paused (mclStop, mclSetResume, mclSetPause)
+  'player_stop': ('int', 'void'),
++ 'player_save_stop': ('int', 'void'),  # snapshot local playback and release its PCM
+  'player_save_start': ('int', 'int'),  # pause: mclStartPlayer at the saved seek, then paused if set
+  'mclGetSavePlayStatus': ('int', 'void'),  # player_save_stop's mclGetPlayStatus, unless that was 1
+  'save_memoryplay_info': ('int', 'void'),  # Memory playback's queue and position, as into_poweroff saves them

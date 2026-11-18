@@ -1,0 +1,49 @@
+q2-boy 0.2.2 source
+
+gpSP from https://github.com/libretro/gpsp
+Pinned commit: 5819380c2ffb0900219d700a382ee68c464ebb99
+The upstream source snapshot is included. Apply gpsp-q2.patch before building.
+Gambatte from https://github.com/libretro/gambatte
+Pinned commit: 77f2567d718b8973d02caa2daa8dce4953faf811
+The pinned Gambatte snapshot includes its GPL and attribution files.
+Startup shim from https://github.com/DiamondBond/q2-groovebox, GPL-2.0-or-later
+as stated in that file. Liberation Sans bitmap generation and font are included
+with attribution and terms in FONT-LICENSE. The application source is GPL-2.0-or-later.
+
+Use Clang and LLD and a Q2 sysroot with glibc 2.28 and ALSA headers, and
+NaN2008 shared libraries from Q2-Pod 1.8.8. The archive contains no firmware.
+The layout of the sysroot is the one described in the q2-groovebox README.
+Headers from Debian buster provide compatibility with the firmware loader;
+copy gnu/stubs-o32_hard.h to gnu/stubs-o32_hard_2008.h in the MIPS include
+directory. Compile the core and frontend with the same ABI.
+
+    tar xf gpsp-5819380.tar.gz
+    cd gpsp
+    patch -p1 < ../gpsp-q2.patch
+    Q2_CC="clang --target=mipsel-linux-gnu --sysroot=$SYSROOT -isystem $SYSROOT/usr/include/mipsel-linux-gnu -mabi=32 -mfp64 -mnan=2008 -mabs=2008"
+    make -j4 platform=mips32 STATIC_LINKING=1 TARGET=gpsp.a CC="$Q2_CC" CXX="$Q2_CC" FRONTEND_SUPPORTS_RGB565=1
+    cd ..
+    SYSROOT="$SYSROOT" GPSP="$PWD/gpsp" sh build.sh q2-boy
+
+For Gambatte, extract Debian's MIPS little-endian libstdc++-10-dev header
+package separately. Set CXX_HEADERS to the extraction root and use the Q2
+firmware's libstdc++.so.6 in $SYSROOT/lib. Build the shared core next to the
+frontend executable.
+
+    tar xf gambatte-77f2567.tar.gz
+    CXX_HEADERS=/path/to/extracted/headers GAMBATTE="$PWD/gambatte" \
+      sh build-gambatte.sh gambatte_libretro.so
+
+The minimal homebrew test program is in smoke.s. It is independent of any
+commercial ROM. The application has a local test invocation:
+    q2-boy --smoke /path/to/test.gba /path/to/existing/test-directory
+It creates ROMs and Saves subdirectories beneath that directory.
+Run python3 make-gb-fixtures.py /path/to/fixtures to generate original GB and
+GBC test ROMs. To test switching between cores, append those two ROM paths
+after the test directory in the smoke command.
+
+Optional firmware bridge
+Apply q2-pod-boy-audio.patch to Q2-Pod commit
+633f7b9e8df4d1278f39fd14d31e01cb51b9623e. Follow the upstream development
+build instructions using the original Shanling Q2 V1.36 ZIP.
+See https://github.com/DiamondBond/q2-pod/pull/426 for integration status.

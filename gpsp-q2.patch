@@ -1,0 +1,33 @@
+diff --git a/Makefile b/Makefile
+index f5e3bf2..680d897 100644
+--- a/Makefile
++++ b/Makefile
+@@ -427,8 +427,8 @@ else ifeq ($(platform), mips32)
+ 	TARGET := $(TARGET_NAME)_libretro.so
+ 	SHARED := -shared -nostdlib -Wl,--version-script=link.T
+ 	fpic := -fPIC -DPIC
+-	CFLAGS += -fomit-frame-pointer -ffast-math -march=mips32 -mtune=mips32r2 -mhard-float
+-	CFLAGS += -DMIPS_HAS_R2_INSTS
++	CFLAGS += -fomit-frame-pointer -ffast-math -march=mips32r2 -mtune=mips32r2 -mhard-float
++	CFLAGS += -DMIPS_HAS_R2_INSTS -DSMALL_TRANSLATION_CACHE -DROM_BUFFER_SIZE=8 -DQ2_FRAME_BUDGET
+ 	HAVE_DYNAREC := 1
+ 	CPU_ARCH := mips
+ 
+diff --git a/libretro/libretro.c b/libretro/libretro.c
+index ed2a7d2..fc2f559 100644
+--- a/libretro/libretro.c
++++ b/libretro/libretro.c
+@@ -1435,6 +1435,13 @@ void retro_run(void)
+       }
+    }
+ 
++#ifdef Q2_FRAME_BUDGET
++   /* The Q2 frontend can pace panel updates independently of GBA execution. */
++   int enabled = 0;
++   if (environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &enabled) && !(enabled & 1))
++      skip_next_frame = 1;
++#endif
++
+    /* If frameskip settings have changed, update
+     * frontend audio latency */
+    if (update_audio_latency)
