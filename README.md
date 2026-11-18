@@ -1,1 +1,1 @@
-# q2-luna-lander
+# q2 gameboy emulator
